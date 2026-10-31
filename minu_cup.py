@@ -168,18 +168,35 @@ def step4_tao_phong(port: int = INSTANCE_1):
 # ============================================================
 # EXTRACT ROOM CODE — read 6-digit code from instance 1 UI
 # ============================================================
+ROOM_CODE_CROP = (0.49, 0.80, 0.58, 0.86)  # vùng mã phòng theo tỉ lệ (x1, y1, x2, y2)
+
+
+def read_room_code(path: str) -> str | None:
+    with Image.open(path) as image:
+        w, h = image.size
+        x1, y1, x2, y2 = ROOM_CODE_CROP
+        green = image.crop((int(x1 * w), int(y1 * h), int(x2 * w), int(y2 * h))).split()[1]
+    big = green.resize((green.width * 4, green.height * 4), Image.LANCZOS)
+    votes = Counter()
+    for threshold in (100, 130, 160):
+        crop_path = Path(SCREENSHOT_DIR) / f"room_code_crop_{threshold}.png"
+        ImageOps.invert(big.point(lambda p: 255 if p > threshold else 0)).save(crop_path)
+        for text, _confidence, _bbox in ocrmac.OCR(str(crop_path), language_preference=["en-US"]).recognize():
+            match = re.search(r"\d{6}", text)
+            if match:
+                votes[match.group()] += 1
+    print(f"  → OCR votes: {dict(votes)}")
+    return votes.most_common(1)[0][0] if votes else None
+
+
 def get_room_code(port: int = INSTANCE_1, retries: int = 5) -> str:
     for attempt in range(1, retries + 1):
         print(f"[{tag(port)}] Extracting room code via OCR (attempt {attempt}/{retries}) ...")
         screenshot(port=port)
-        path = f"{SCREENSHOT_DIR}/bap_screen_{port}.png"
-
-        for text, _confidence, _bbox in ocrmac.OCR(path, language_preference=["en-US"]).recognize():
-            match = re.search(r"\b(\d{6})\b", text)
-            if match:
-                code = match.group(1)
-                print(f"  → Room code: {code}")
-                return code
+        code = read_room_code(f"{SCREENSHOT_DIR}/bap_screen_{port}.png")
+        if code:
+            print(f"  → Room code: {code}")
+            return code
 
         wait(1, "room code not visible yet")
 
